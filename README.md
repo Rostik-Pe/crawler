@@ -1,14 +1,13 @@
 # GitHub Crawler
 
-GitHub Crawler is an asynchronous Python script for searching and gathering information from GitHub. It can search for repositories, issues, and wiki pages based on given keywords.
+An asynchronous web crawler for searching and analyzing GitHub repositories.
 
 ## Features
 
-- Asynchronous crawling for improved performance
-- Proxy support to bypass request limitations
-- Ability to search for repositories, issues, and wiki pages
-- Collection of additional repository information (owner, language statistics)
-- Error handling and logging
+- Asynchronous repository search based on keywords
+- Proxy support for request rate limiting bypass
+- Language usage statistics extraction for repositories
+- Results saved in JSON format
 
 ## Requirements
 
@@ -27,25 +26,8 @@ This script requires Python 3.7 or higher. All necessary dependencies are listed
 
 ## Usage
 
-1. Prepare input data in JSON format. Example:
-```json
-[
-            {
-                "url": "https://github.com/atuldjadhav/DropBox-Cloud-Storage",
-                "extra": {
-                    "owner": "atuldjadhav",
-                    "language_stats": {
-                        "CSS": 52.0,
-                        "JavaScript": 47.2,
-                        "HTML": 0.8
-                    }
-                }
-            }
-        ]
-```
-2. Run the script:
-   python github_crawler.py
-3. Results will be output in JSON format
+1. Run the script from the command line:
+2. Enter search keywords and search type (Repositories or Issues) when prompted.
 
 ## Testing
 1. To run unit tests, execute:
