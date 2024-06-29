@@ -1,194 +1,276 @@
-import asynctest
-import aiohttp
-from unittest.mock import patch, AsyncMock
+import asyncio
 import json
-from .github_crawler import GitHubCrawler, main
+import os
+import unittest
+from unittest.mock import patch, AsyncMock, mock_open
+
+import aiohttp
+from bs4 import BeautifulSoup
+from parameterized import parameterized
+
+from github_crawler import GitHubCrawler, main, generate_input_data_json
 
 
-class TestGitHubCrawler(asynctest.TestCase):
+class TestGitHubCrawler(unittest.TestCase):
+
     def setUp(self):
         self.input_data = {
             "keywords": ["python", "asyncio"],
-            "proxies": ["194.126.37.94:8080"],
+            "proxies": ["194.126.37.94:8080", "13.78.125.167:8080"],
             "type": "Repositories"
         }
         self.crawler = GitHubCrawler(self.input_data)
 
     def test_init(self):
         self.assertEqual(self.crawler.keywords, ["python", "asyncio"])
-        self.assertEqual(self.crawler.proxies, ["194.126.37.94:8080"])
+        self.assertEqual(self.crawler.proxies, ["194.126.37.94:8080", "13.78.125.167:8080"])
         self.assertEqual(self.crawler.search_type, "Repositories")
+        self.assertEqual(self.crawler.base_url, 'https://github.com/search')
+        self.assertEqual(self.crawler.delay, 0.5)
+        self.assertEqual(self.crawler.timeout, 10)
 
     def test_get_random_proxy(self):
         proxy = self.crawler.get_random_proxy()
-        self.assertIn(proxy, self.input_data["proxies"])
+        self.assertIn(proxy, self.crawler.proxies)
 
-    def test_create_search_url(self):
-        expected_url = "https://github.com/search?q=python+asyncio&type=repositories"
-        self.assertEqual(self.crawler.create_search_url(), expected_url)
+        crawler_no_proxy = GitHubCrawler({"keywords": [], "proxies": [], "type": "Repositories"})
+        self.assertIsNone(crawler_no_proxy.get_random_proxy())
 
-    @asynctest.patch('aiohttp.ClientSession.get')
-    async def test_make_request(self, mock_get):
-        mock_response = AsyncMock()
-        mock_response.text.return_value = "test content"
-        mock_response.raise_for_status.return_value = None
-        mock_get.return_value.__aenter__.return_value = mock_response
+    @parameterized.expand([
+        (["python", "asyncio"], "Repositories", "https://github.com/search?q=python+asyncio&type=repositories"),
+        (["machine learning", "python"], "Repositories",
+         "https://github.com/search?q=machine learning+python&type=repositories"),
+        (["python", "asyncio"], "Issues", "https://github.com/search?q=python+asyncio&type=issues"),
+    ])
+    def test_create_search_url(self, keywords, search_type, expected_url):
+        self.crawler.keywords = keywords
+        self.crawler.search_type = search_type
+        url = self.crawler.create_search_url()
+        self.assertEqual(url, expected_url)
 
-        async with aiohttp.ClientSession() as session:
-            content = await self.crawler.make_request(session, "https://test.com")
-        self.assertEqual(content, "test content")
-
-    @asynctest.patch('aiohttp.ClientSession.get')
-    async def test_make_request_error(self, mock_get):
-        mock_get.side_effect = aiohttp.ClientError("Test error")
-
-        async with aiohttp.ClientSession() as session:
-            content = await self.crawler.make_request(session, "https://test.com")
-        self.assertIsNone(content)
-
-    async def test_parse_html_repositories(self):
-        html_content = """
-        <div class="repo-list">
-            <div class="repo-list-item">
-                <a class="v-align-middle" href="/user/repo">Repo Name</a>
-            </div>
-        </div>
-        """
-        self.crawler.search_type = "Repositories"
-
-        async def mock_get_repo_extra_info(*args):
-            return {"owner": "user", "language_stats": {}}
-
-        with patch.object(self.crawler, 'get_repo_extra_info', new=mock_get_repo_extra_info):
-            async with aiohttp.ClientSession() as session:
-                results = await self.crawler.parse_html(session, html_content)
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]['url'], "https://github.com/user/repo")
-        self.assertEqual(results[0]['extra']['owner'], "user")
-
-    async def test_parse_html_issues(self):
-        html_content = """
-        <div class="issue-list">
-            <div class="issue-list-item">
-                <a class="Link--primary" href="/user/repo/issues/1">Issue Title</a>
-            </div>
-        </div>
-        """
-        self.crawler.search_type = "Issues"
-
-        async with aiohttp.ClientSession() as session:
-            results = await self.crawler.parse_html(session, html_content)
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]['url'], "https://github.com/user/repo/issues/1")
-
-    async def test_parse_html_invalid(self):
+    def test_validate_html(self):
         with self.assertRaises(ValueError):
-            async with aiohttp.ClientSession() as session:
-                await self.crawler.parse_html(session, None)
+            GitHubCrawler.validate_html("")
+        with self.assertRaises(ValueError):
+            GitHubCrawler.validate_html(123)
+        GitHubCrawler.validate_html("<html></html>")
+        GitHubCrawler.validate_html("<html><body>Content</body></html>")
 
-    @asynctest.patch('aiohttp.ClientSession.get')
-    async def test_get_repo_extra_info(self, mock_get):
-        html_content = """
-        <div class="repository-lang-stats-graph">
-            <span class="language-color" aria-label="Python 60.0%"></span>
-            <span class="language-color" aria-label="JavaScript 40.0%"></span>
-        </div>
-        """
-        mock_response = AsyncMock()
-        mock_response.text.return_value = html_content
-        mock_response.raise_for_status.return_value = None
-        mock_get.return_value.__aenter__.return_value = mock_response
+    def test_create_soup(self):
+        html = "<html><body><p>Test</p></body></html>"
+        soup = GitHubCrawler.create_soup(html)
+        self.assertIsInstance(soup, BeautifulSoup)
+        self.assertIsNotNone(soup.find('p'))
 
-        async with aiohttp.ClientSession() as session:
-            info = await self.crawler.get_repo_extra_info(session, "https://github.com/user/repo")
+        with self.assertRaises(ValueError):
+            GitHubCrawler.create_soup(None)
+        with self.assertRaises(ValueError):
+            GitHubCrawler.create_soup(123)
 
-        self.assertEqual(info['owner'], "user")
-        self.assertEqual(info['language_stats'], {"Python": 60.0, "JavaScript": 40.0})
+    def test_find_language_div(self):
+        html = '''
+        <html>
+            <div class="BorderGrid-row"><p>First</p></div>
+            <div class="BorderGrid-row"><p>Second</p></div>
+        </html>
+        '''
+        soup = BeautifulSoup(html, 'html.parser')
+        div = GitHubCrawler.find_language_div(soup)
+        self.assertEqual(div.find('p').text, "Second")
 
-    @asynctest.patch.object(GitHubCrawler, 'make_request')
-    @asynctest.patch.object(GitHubCrawler, 'parse_html')
-    async def test_crawl(self, mock_parse_html, mock_make_request):
-        mock_make_request.return_value = "html content"
-        mock_parse_html.return_value = [
-            {"url": "https://github.com/user/repo", "extra": {"owner": "user", "language_stats": {}}}]
+        html_no_div = '<html></html>'
+        soup_no_div = BeautifulSoup(html_no_div, 'html.parser')
+        self.assertIsNone(GitHubCrawler.find_language_div(soup_no_div))
 
-        results = await self.crawler.crawl()
+    def test_extract_language_info(self):
+        html = '<li><span class="text-bold">Python</span><span>80%</span></li>'
+        li = BeautifulSoup(html, 'html.parser').find('li')
+        language, percentage = GitHubCrawler.extract_language_info(li)
+        self.assertEqual((language, percentage), ("Python", "80%"))
 
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]['url'], "https://github.com/user/repo")
-        self.assertEqual(results[0]['extra']['owner'], "user")
+        html_no_percentage = '<li><span class="text-bold">Python</span></li>'
+        li_no_percentage = BeautifulSoup(html_no_percentage, 'html.parser').find('li')
+        language, percentage = GitHubCrawler.extract_language_info(li_no_percentage)
+        self.assertEqual((language, percentage), ("Python", None))
 
-    @asynctest.patch.object(GitHubCrawler, 'make_request')
-    async def test_crawl_error(self, mock_make_request):
-        mock_make_request.return_value = None
+        html_invalid = '<li><span>Invalid</span></li>'
+        li_invalid = BeautifulSoup(html_invalid, 'html.parser').find('li')
+        self.assertEqual(GitHubCrawler.extract_language_info(li_invalid), (None, None))
 
-        with self.assertRaises(RuntimeError):
-            await self.crawler.crawl()
-
-    @asynctest.patch.object(GitHubCrawler, 'crawl')
-    async def test_main_function_crawler(self, mock_crawl):
-        mock_crawl.return_value = [
-            {
-                "url": "https://github.com/user/repo",
-                "extra": {
-                    "owner": "user",
-                    "language_stats": {
-                        "Python": 60.0,
-                        "JavaScript": 40.0
-                    }
-                }
-            }
+    @patch('aiohttp.ClientSession')
+    async def test_make_request(self, mock_session):
+        scenarios = [
+            ("Test content", "Test content"),
+            (aiohttp.ClientError(), None),
+            (asyncio.TimeoutError(), None),
+            ("", None)
         ]
 
-        input_data = {
+        for scenario, expected_result in scenarios:
+            if isinstance(scenario, str):
+                mock_response = AsyncMock()
+                mock_response.text.return_value = scenario
+                mock_response.__aenter__.return_value = mock_response
+                mock_session.return_value.get.return_value = mock_response
+            else:
+                mock_session.return_value.get.side_effect = scenario
+
+            content = await self.crawler.make_request(mock_session(), "https://test.com")
+            self.assertEqual(content, expected_result)
+
+    async def test_parse_html(self):
+        html = '''
+        <html>
+            <div class="BorderGrid-row">
+                <li><span class="text-bold">Python</span><span>80%</span></li>
+                <li><span class="text-bold">JavaScript</span><span>20%</span></li>
+            </div>
+        </html>
+        '''
+        result = await self.crawler.parse_html(html)
+        self.assertEqual(result, {"language_stats": {"Python": "80%", "JavaScript": "20%"}})
+
+        with self.assertRaises(ValueError):
+            await self.crawler.parse_html("")
+
+    @patch('aiohttp.ClientSession')
+    async def test_process_single_repository(self, mock_session):
+        scenarios = [
+            ('''
+            <html>
+                <div class="BorderGrid-row">
+                    <li><span class="text-bold">Python</span><span>100%</span></li>
+                </div>
+            </html>
+            ''', {
+                'url': 'https://github.com/test/repo/',
+                'extra': {
+                    'owner': 'test',
+                    'language_stats': {'Python': '100%'}
+                }
+            }),
+            (aiohttp.ClientError(), None),
+            ("<html></html>", None)
+        ]
+
+        for html_content, expected_result in scenarios:
+            if isinstance(html_content, str):
+                mock_response = AsyncMock()
+                mock_response.text.return_value = html_content
+                mock_response.__aenter__.return_value = mock_response
+                mock_session.return_value.get.return_value = mock_response
+            else:
+                mock_session.return_value.get.side_effect = html_content
+
+            repo = {"owner": "test", "repo_name": "repo"}
+            result = await self.crawler.process_single_repository(mock_session(), repo)
+            self.assertEqual(result, expected_result)
+
+    @patch('aiohttp.ClientSession')
+    async def test_crawl(self, mock_session):
+        mock_response = AsyncMock()
+        mock_response.text.return_value = json.dumps({
+            'payload': {
+                'results': [
+                    {'repo': {'repository': {'owner_login': 'test', 'name': 'repo'}}}
+                ]
+            }
+        })
+        mock_response.__aenter__.return_value = mock_response
+        mock_session.return_value.get.return_value = mock_response
+
+        with patch.object(self.crawler, 'process_repositories',
+                          return_value=[{'url': 'https://github.com/test/repo/'}]):
+            with patch.object(self.crawler, 'save'):
+                await self.crawler.crawl()
+                self.crawler.save.assert_called_once()
+
+    def test_extract_repositories(self):
+        content_empty = json.dumps({'payload': {'results': []}})
+        repos_empty = self.crawler.extract_repositories(content_empty)
+        self.assertEqual(repos_empty, [])
+
+        content_multiple = json.dumps({
+            'payload': {
+                'results': [
+                    {'repo': {'repository': {'owner_login': 'user1', 'name': 'repo1'}}},
+                    {'repo': {'repository': {'owner_login': 'user2', 'name': 'repo2'}}}
+                ]
+            }
+        })
+        repos_multiple = self.crawler.extract_repositories(content_multiple)
+        expected = [
+            {'owner': 'user1', 'repo_name': 'repo1'},
+            {'owner': 'user2', 'repo_name': 'repo2'}
+        ]
+        self.assertEqual(repos_multiple, expected)
+
+    @patch('github_crawler.os.makedirs')
+    @patch('github_crawler.datetime')
+    def test_save(self, mock_datetime, mock_makedirs):
+        data = [{"test": "data"}]
+        mock_datetime.now.return_value.strftime.return_value = "2023_01_01_00_00_00"
+
+        mock_file = mock_open()
+        with patch('github_crawler.open', mock_file):
+            self.crawler.save(data)
+
+        expected_path = os.path.join('output_results', '2023_01_01_00_00_00_items.json')
+        mock_file.assert_called_once_with(expected_path, 'w')
+
+        expected_json = json.dumps(data, indent=4)
+        actual_calls = mock_file().write.call_args_list
+        actual_json = ''.join(call.args[0] for call in actual_calls)
+
+        self.assertEqual(expected_json, actual_json)
+
+        mock_makedirs.assert_called_once_with('output_results', exist_ok=True)
+
+
+class TestMainFunction(unittest.TestCase):
+
+    @patch('github_crawler.GitHubCrawler.crawl')
+    async def test_main(self, mock_crawl):
+        scenarios = [
+            (json.dumps({
+                "keywords": ["python"],
+                "proxies": ["194.126.37.94:8080"],
+                "type": "Repositories"
+            }), "[]"),
+            (json.dumps([{"url": "https://github.com/test/repo"}]),
+             json.dumps([{"url": "https://github.com/test/repo"}], indent=2)),
+            ("invalid json", json.dumps({"error": "Invalid input JSON"})),
+            ("{}", json.dumps({"error": "Invalid input format"})),
+        ]
+
+        for input_json, expected_output in scenarios:
+            result = await main(input_json)
+            self.assertEqual(result, expected_output)
+
+        mock_crawl.side_effect = Exception("Crawl error")
+        result = await main(json.dumps({
             "keywords": ["python"],
             "proxies": ["194.126.37.94:8080"],
             "type": "Repositories"
-        }
-        input_json = json.dumps(input_data)
-
-        result = await main(input_json)
-        result_list = json.loads(result)
-
-        self.assertEqual(len(result_list), 1)
-        self.assertEqual(result_list[0]['url'], "https://github.com/user/repo")
-        self.assertEqual(result_list[0]['extra']['owner'], "user")
-        self.assertEqual(result_list[0]['extra']['language_stats']['Python'], 60.0)
-
-    async def test_main_function_specific_results(self):
-        input_data = [
-            {
-                "url": "https://github.com/user/repo",
-                "extra": {
-                    "owner": "user",
-                    "language_stats": {
-                        "Python": 60.0,
-                        "JavaScript": 40.0
-                    }
-                }
-            }
-        ]
-        input_json = json.dumps(input_data)
-
-        result = await main(input_json)
-        result_list = json.loads(result)
-
-        self.assertEqual(len(result_list), 1)
-        self.assertEqual(result_list[0]['url'], "https://github.com/user/repo")
-        self.assertEqual(result_list[0]['extra']['owner'], "user")
-        self.assertEqual(result_list[0]['extra']['language_stats']['Python'], 60.0)
-
-    async def test_main_function_error(self):
-        input_json = "invalid json"
-
-        result = await main(input_json)
-        result_dict = json.loads(result)
-
-        self.assertIn("error", result_dict)
-        self.assertIn("Invalid input JSON", result_dict["error"])
+        }))
+        self.assertIn("error", json.loads(result))
 
 
-if __name__ == "__main__":
-    asynctest.main()
+class TestGenerateInputDataJson(unittest.TestCase):
+
+    @parameterized.expand([
+        ("python asyncio", "Repositories", ['python', 'asyncio'], "Repositories"),
+        ("python", "Issues", ['python'], "Issues"),
+        ("", "Repositories", [], "Repositories"),
+        ("python django rest", "Issues", ["python", "django", "rest"], "Issues"),
+    ])
+    def test_generate_input_data_json(self, input_key, input_type, expected_keywords, expected_type):
+        result = generate_input_data_json(input_key, input_type)
+        data = json.loads(result)
+        self.assertEqual(data['keywords'], expected_keywords)
+        self.assertEqual(data['type'], expected_type)
+        self.assertEqual(data['proxies'], ["194.126.37.94:8080", "13.78.125.167:8080"])
+
+
+if __name__ == '__main__':
+    unittest.main()
