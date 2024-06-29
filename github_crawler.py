@@ -2,10 +2,11 @@ import random
 import asyncio
 import aiohttp
 import json
-from bs4 import BeautifulSoup
+import os
+from bs4 import BeautifulSoup, Tag
 import logging
 from typing import List, Dict, Optional, Any
-import unittest
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -33,18 +34,20 @@ class GitHubCrawler:
         results = await crawler.crawl()
     """
 
-    def __init__(self, input_data: Dict[str, Any]):
+    def __init__(self, crawler_data: Dict[str, Any]):
         """
         Initialize GitHubCrawler with input data.
 
         Args:
-            input_data (Dict[str, Any]): Dictionary containing 'keywords', 'proxies', and 'type'.
+            crawler_data (Dict[str, Any]): Dictionary containing 'keywords', 'proxies', and 'type'.
         """
-        logging.info(f"Initializing GitHubCrawler with input data: {input_data}")
-        self.keywords: List[str] = input_data['keywords']
-        self.proxies: List[str] = input_data['proxies']
-        self.search_type: str = input_data['type']
+        logging.info(f"Initializing GitHubCrawler with input data: {crawler_data}")
+        self.keywords: List[str] = crawler_data['keywords']
+        self.proxies: List[str] = crawler_data['proxies']
+        self.search_type: str = crawler_data['type']
         self.base_url: str = 'https://github.com/search'
+        self.delay: Optional[int, float] = 0.5  # delay between requests
+        self.timeout: Optional[int, float] = 10
 
     def get_random_proxy(self) -> Optional[str]:
         """
@@ -67,7 +70,16 @@ class GitHubCrawler:
         query = '+'.join(self.keywords)
         search_url = f"{self.base_url}?q={query}&type={self.search_type.lower()}"
         logging.info(f"Generated search URL: {search_url}")
+
         return search_url
+
+    @staticmethod
+    def save(data):
+        output_dir = 'output_results'
+        os.makedirs(output_dir, exist_ok=True)
+        file_name = os.path.join(output_dir, f'{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}_items.json')
+        with open(file_name, 'w') as f:
+            json.dump(data, f, indent=4)
 
     async def make_request(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
         """
@@ -87,14 +99,9 @@ class GitHubCrawler:
         proxy = self.get_random_proxy()
         proxies = {'http': f'http://{proxy}', 'https': f'https://{proxy}'} if proxy else None
         logging.info(f"Making request to {url} using proxies: {proxies}")
+
         try:
-            async with session.get(url, proxy=proxies, timeout=10) as response:
-                response.raise_for_status()
-                content = await response.text()
-                if not content.strip():
-                    logging.warning("Received empty content from server")
-                    return
-                return content
+            return await self._perform_request(session, url)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             logging.error(f"Error making request: {e}")
             return
@@ -102,18 +109,24 @@ class GitHubCrawler:
             logging.error(f"Unexpected error in make_request: {e}")
             return
         finally:
-            await asyncio.sleep(0.5)  # delay between requests
+            await asyncio.sleep(self.delay)
 
-    async def parse_html(self, session: aiohttp.ClientSession, html: str) -> List[Dict[str, Any]]:
+    async def _perform_request(self, session: aiohttp.ClientSession, url: str):
+        async with session.get(url, proxy=None, timeout=self.timeout) as response:
+            response.raise_for_status()
+            content = await response.text()
+            if not content.strip():
+                logging.warning("Received empty content from server")
+                return
+            return content
+
+    @staticmethod
+    def validate_html(html: str) -> None:
         """
-        Parse HTML content asynchronously using BeautifulSoup.
+        Validate the HTML content.
 
         Args:
-            session (aiohttp.ClientSession): Aiohttp client session object.
-            html (str): HTML content to parse.
-
-        Returns:
-            List[Dict[str, Any]]: List of dictionaries containing parsed results.
+            html (str): HTML content to validate.
 
         Raises:
             ValueError: If the HTML content is invalid.
@@ -124,72 +137,88 @@ class GitHubCrawler:
 
         if not html.strip():
             logging.warning("Empty HTML content")
-            return []
+            raise ValueError("Empty HTML content")
 
+    @staticmethod
+    def create_soup(html: str) -> BeautifulSoup:
+        """
+        Create a BeautifulSoup object from HTML content.
+
+        Args:
+            html (str): HTML content to parse.
+
+        Returns:
+            BeautifulSoup: Parsed HTML object.
+
+        Raises:
+            ValueError: If there's an error parsing the HTML.
+        """
         try:
-            soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
+            return BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
         except Exception as e:
             logging.error(f"Error creating BeautifulSoup object: {e}")
             raise ValueError(f"Error parsing HTML: {e}")
 
-        async def get_results():
-            if self.search_type.lower() == 'repositories':
-                for repo in soup.select('.repo-list-item'):
-                    link = repo.select_one('a.v-align-middle')
-                    if link:
-                        url = f"https://github.com{link['href']}"
-                        extra_info = await self.get_repo_extra_info(session, url)
-                        yield {"url": url, "extra": extra_info}
-            elif self.search_type.lower() in ['issues', 'wikis']:
-                for item in soup.select('.issue-list-item, .wiki-list-item'):
-                    link = item.select_one('a.Link--primary')
-                    if link:
-                        yield {"url": f"https://github.com{link['href']}"}
-
-        return [result async for result in get_results()]
-
-    async def get_repo_extra_info(self, session: aiohttp.ClientSession, repo_url: str) -> Dict[str, Any]:
+    def extract_language_stats(self, soup: BeautifulSoup) -> Dict[str, str]:
         """
-        Get additional repository information asynchronously.
+        Extract language statistics from the parsed HTML.
 
         Args:
-            session (aiohttp.ClientSession): Aiohttp client session object.
-            repo_url (str): URL of the repository to fetch extra information.
+            soup (BeautifulSoup): Parsed HTML object.
 
         Returns:
-            Dict[str, Any]: Dictionary containing additional repository information.
+            Dict[str, str]: Dictionary of language names and their percentages.
         """
-        html = await self.make_request(session, repo_url)
-        if not html:
-            return {}
-
-        try:
-            soup = BeautifulSoup(html, 'html.parser', from_encoding='utf-8')
-        except Exception as e:
-            logging.error(f"Error creating BeautifulSoup object for repo info: {e}")
-            return {}
-
-        owner = repo_url.split('/')[-2]
-
-        language_stats = {}
-        lang_stats_bar = soup.select_one('.repository-lang-stats-graph')
-        if lang_stats_bar:
-            for lang in lang_stats_bar.select('.language-color'):
-                lang_name = lang.get('aria-label', '').split()[0]
-                lang_percent = float(lang.get('aria-label', '').split()[-1].rstrip('%'))
-                language_stats[lang_name] = lang_percent
+        lang_div_tag = self.find_language_div(soup)
+        li_elements = lang_div_tag.find_all('li') if lang_div_tag else []
 
         return {
-            "owner": owner,
-            "language_stats": language_stats
+            language: percentage
+            for language, percentage in map(self.extract_language_info, li_elements)
+            if language and percentage
         }
 
-    async def crawl(self) -> List[Dict[str, Any]]:
+    @staticmethod
+    def find_language_div(soup: BeautifulSoup) -> Optional[Tag]:
+        """Find the div containing language information."""
+        border_grid_rows = soup.find_all('div', class_='BorderGrid-row')
+        return border_grid_rows[-1] if border_grid_rows else None
+
+    @staticmethod
+    def extract_language_info(li: Tag) -> tuple[Optional[str], Optional[str]]:
+        """Extract language name and percentage from a list item."""
+        language_span = li.find('span', class_='text-bold')
+        if not language_span:
+            return None, None
+
+        language_name = language_span.text.strip()
+        percentage_span = language_span.find_next_sibling('span')
+        percentage = percentage_span.text.strip() if percentage_span else None
+
+        return language_name, percentage
+
+    async def parse_html(self, html: str) -> Dict[str, Any]:
         """
-        Perform crawling of GitHub search results asynchronously.
+        Parse HTML content asynchronously using BeautifulSoup.
+
+        Args:
+            html (str): HTML content to parse.
 
         Returns:
-            List[Dict[str, Any]]: List of dictionaries containing parsed search results.
+            Dict[str, Any]: Dictionary containing parsed results.
+
+        Raises:
+            ValueError: If the HTML content is invalid.
+        """
+        self.validate_html(html)
+        soup = self.create_soup(html)
+        language_stats = self.extract_language_stats(soup)
+
+        return {"language_stats": language_stats}
+
+    async def crawl(self) -> None:
+        """
+        Perform crawling of GitHub search results asynchronously.
 
         Raises:
             RuntimeError: If failed to retrieve HTML content.
@@ -198,14 +227,45 @@ class GitHubCrawler:
         logging.info(f"Crawling URL: {url}")
 
         async with aiohttp.ClientSession() as session:
-            html = await self.make_request(session, url)
-            if html is not None:
-                results = await self.parse_html(session, html)
-                logging.info(f"Found {len(results)} results")
-                return results
+            content = await self.make_request(session, url)
+            repositories = self.extract_repositories(content)
+            output_data = await self.process_repositories(session, repositories)
+            self.save(output_data)
 
-            logging.error("Failed to retrieve HTML content")
-            raise RuntimeError("Failed to retrieve HTML content")
+    @staticmethod
+    def extract_repositories(content: str) -> List[Dict[str, str]]:
+        """Extract repository data from JSON content."""
+        repositories_meta_data = json.loads(content)
+        repositories = repositories_meta_data['payload']['results']
+        return [
+            {
+                'owner': repo['repo']['repository']['owner_login'],
+                'repo_name': repo['repo']['repository']['name'],
+            }
+            for repo in repositories
+        ]
+
+    async def process_repositories(self, session: aiohttp.ClientSession, repositories: List[Dict]) -> List[Dict]:
+        """Process each repository to gather additional data."""
+        tasks = [self.process_single_repository(session, repo) for repo in repositories]
+        return [_result for _result in await asyncio.gather(*tasks) if _result is not None]
+
+    async def process_single_repository(self, session: aiohttp.ClientSession, repo: Dict[str, str]) -> Optional[Dict]:
+        """Process a single repository to gather additional data."""
+        url = f'https://github.com/{repo['owner']}/{repo['repo_name']}/'
+        extra_content_html = await self.make_request(session, url)
+
+        if extra_content_html is None:
+            return
+
+        language_stats = await self.parse_html(extra_content_html)
+        return {
+            'url': url,
+            'extra': {
+                'owner': repo['owner'],
+                'language_stats': language_stats['language_stats']
+            },
+        }
 
 
 async def main(input_json_str: str) -> str:
@@ -219,15 +279,13 @@ async def main(input_json_str: str) -> str:
         str: JSON string containing crawling results, processed specific results, or error message.
     """
     try:
-        input_data = json.loads(input_json_str)
+        data = json.loads(input_json_str)
 
-        if isinstance(input_data, dict) and all(key in input_data for key in ['keywords', 'proxies', 'type']):
-            # This is input data for the crawler
-            crawler = GitHubCrawler(input_data)
+        if isinstance(data, dict) and all(key in data for key in ['keywords', 'proxies', 'type']):
+            crawler = GitHubCrawler(data)
             results = await crawler.crawl()
-        elif isinstance(input_data, list) and all('url' in item for item in input_data):
-            # This is a list of specific results
-            results = input_data
+        elif isinstance(data, list) and all('url' in item for item in data):
+            results = data
         else:
             raise ValueError("Invalid input format")
 
@@ -243,58 +301,29 @@ async def main(input_json_str: str) -> str:
         return json.dumps({"error": f"An unexpected error occurred: {str(e)}"})
 
 
+def generate_input_data_json(inp_data_key: str, inp_data_type: str) -> str:
+    """
+        Generate JSON string from input data.
+
+        Args:
+            inp_data_key (str): Input data key to split into keywords.
+            inp_data_type (str): Input data type.
+
+        Returns:
+            str: JSON string representing input data.
+        """
+    input_data = {
+        'keywords': inp_data_key.split(),
+        "proxies": ["194.126.37.94:8080", "13.78.125.167:8080"],
+        'type': inp_data_type,
+    }
+    return json.dumps(input_data)
+
+
 if __name__ == "__main__":
-    import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        unittest.main(argv=['first-arg-is-ignored'], exit=False)
-    else:
-        # input_data = {
-        #     "keywords": ["python", "django-rest-framework", "jwt"],
-        #     "proxies": ["194.126.37.94:8080", "13.78.125.167:8080"],
-        #     "type": "Repositories"
-        # }
+    input_keywords = input('Enter keywords separated by spaces: ')
+    input_type = input('Enter search type. Example: Repositories, Issues: ')
 
-        # Specific results
-        input_data = [
-            {
-                "url": "https://github.com/atuldjadhav/DropBox-Cloud-Storage",
-                "extra": {
-                    "owner": "atuldjadhav",
-                    "language_stats": {
-                        "CSS": 52.0,
-                        "JavaScript": 47.2,
-                        "HTML": 0.8
-                    }
-                }
-            }
-        ]
-
-        input_json = json.dumps(input_data)
-        result = asyncio.run(main(input_json))
-        print("Raw result:")
-        print(result)
-
-        try:
-            parsed_result = json.loads(result)
-            print("\nParsed result:")
-            if isinstance(parsed_result, list):
-                for item in parsed_result:
-                    if isinstance(item, dict) and 'url' in item:
-                        print(f"URL: {item['url']}")
-                        if 'extra' in item:
-                            print(f"Owner: {item['extra']['owner']}")
-                            print("Language stats:")
-                            for lang, percent in item['extra']['language_stats'].items():
-                                print(f"  {lang}: {percent}%")
-                    else:
-                        print(f"Unexpected item format: {item}")
-                    print()
-            elif isinstance(parsed_result, dict) and 'error' in parsed_result:
-                print(f"Error occurred: {parsed_result['error']}")
-            else:
-                print(f"Unexpected result format: {parsed_result}")
-        except json.JSONDecodeError as e:
-            print(f"Error decoding result JSON: {e}")
-        except Exception as e:
-            print(f"Error processing result: {e}")
+    input_json = generate_input_data_json(input_keywords, input_type)
+    result = asyncio.run(main(input_json))
