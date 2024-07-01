@@ -321,11 +321,16 @@ def generate_input_data_json(inp_data_key: str, inp_data_type: str) -> str:
     return json.dumps(input_data)
 
 
-if __name__ == "__main__":
+def get_data_from_file():
+    config = configparser.ConfigParser()
+    config.read('input_data.ini')
+    return config['SETTINGS']['keywords'], config['SETTINGS']['type']
 
-    input_keywords = input('Enter keywords separated by spaces: ')
-    input_type = input('Enter search type. Example: Repositories, Issues: ')
+
+if __name__ == "__main__":
+    input_keywords, input_type = get_data_from_file()
 
     input_json = generate_input_data_json(input_keywords, input_type)
     result = asyncio.run(main(input_json))
+    
     
