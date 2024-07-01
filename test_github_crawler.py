@@ -1,4 +1,5 @@
 import asyncio
+import configparser
 import json
 import os
 import unittest
@@ -8,7 +9,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from parameterized import parameterized
 
-from github_crawler import GitHubCrawler, main, generate_input_data_json
+from github_crawler import GitHubCrawler, main, generate_input_data_json, get_data_from_file
 
 
 class TestGitHubCrawler(unittest.TestCase):
@@ -256,7 +257,27 @@ class TestMainFunction(unittest.TestCase):
         self.assertIn("error", json.loads(result))
 
 
-class TestGenerateInputDataJson(unittest.TestCase):
+class TestDataInput(unittest.TestCase):
+
+    def setUp(self):
+        self.test_file_name = 'test_input_data.ini'
+        config = configparser.ConfigParser()
+        config['SETTINGS'] = {'keywords': 'Python, Django, jwt', 'type': 'Repositories'}
+        with open(self.test_file_name, 'w') as configfile:
+            config.write(configfile)
+
+    def test_get_data_from_file(self):
+        keywords, _type = get_data_from_file(file_name=self.test_file_name)
+        self.assertEqual(keywords, 'Python, Django, jwt')
+        self.assertEqual(_type, 'Repositories')
+
+    def test_get_data_from_file_invalid_file(self):
+        with self.assertRaises(ValueError):
+            get_data_from_file('test_invalid_file.ini')
+
+    def tearDown(self):
+        # Clean up: delete the 'test_input_data.ini' file after testing
+        os.remove('test_input_data.ini')
 
     @parameterized.expand([
         ("python asyncio", "Repositories", ['python', 'asyncio'], "Repositories"),
