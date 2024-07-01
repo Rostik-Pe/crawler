@@ -252,7 +252,7 @@ class GitHubCrawler:
 
     async def process_single_repository(self, session: aiohttp.ClientSession, repo: Dict[str, str]) -> Optional[Dict]:
         """Process a single repository to gather additional data."""
-        url = f'https://github.com/{repo['owner']}/{repo['repo_name']}/'
+        url = f"https://github.com/{repo['owner']}/{repo['repo_name']}/"
         extra_content_html = await self.make_request(session, url)
 
         if extra_content_html is None:
