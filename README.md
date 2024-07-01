@@ -27,11 +27,11 @@ This script requires Python 3.11 version. All necessary dependencies are listed 
 ## Usage
 
 1. Run the script from the command line:
-2. Enter search keywords and search type (Repositories or Issues) when prompted.
+2. Enter search keywords and search type (Repositories or Issues) in input_data.ini file.
 
 ## Testing
 1. To run unit tests, execute:
-  python github_crawler.py test
+  python test_github_crawler.py
 
 ## License
 This project is distributed under the MIT License. See the LICENSE file for more information.
