@@ -11,7 +11,7 @@ An asynchronous web crawler for searching and analyzing GitHub repositories.
 
 ## Requirements
 
-This script requires Python 3.7 or higher. All necessary dependencies are listed in the `requirements.txt` file.
+This script requires Python 3.11 version. All necessary dependencies are listed in the `requirements.txt` file.
 
 ## Installation
 
