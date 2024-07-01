@@ -5,7 +5,7 @@ import logging
 import os
 import random
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 import aiohttp
 from bs4 import BeautifulSoup, Tag
@@ -323,10 +323,24 @@ def generate_input_data_json(inp_data_key: str, inp_data_type: str) -> str:
     return json.dumps(input_data)
 
 
-def get_data_from_file():
+def get_data_from_file(file_name: str = 'input_data.ini') -> Tuple[str, str]:
+    """
+    Read keywords and type from the specified .ini file using configparser.
+
+    Args:
+        file_name (str): Name of the .ini file to read. Default is 'input_data.ini'.
+
+    Returns:
+        tuple: A tuple containing keywords (str) and type (str) read from the file.
+    """
     config = configparser.ConfigParser()
-    config.read('input_data.ini')
-    return config['SETTINGS']['keywords'], config['SETTINGS']['type']
+    try:
+        config.read(file_name)
+        keywords = config['SETTINGS']['keywords']
+        _type = config['SETTINGS']['type']
+        return keywords, _type
+    except (configparser.Error, KeyError) as e:
+        raise ValueError(f"Error reading '{file_name}': {e}")
 
 
 if __name__ == "__main__":
@@ -334,5 +348,3 @@ if __name__ == "__main__":
 
     input_json = generate_input_data_json(input_keywords, input_type)
     result = asyncio.run(main(input_json))
-    
-    
