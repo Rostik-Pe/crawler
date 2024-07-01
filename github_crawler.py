@@ -248,7 +248,8 @@ class GitHubCrawler:
     async def process_repositories(self, session: aiohttp.ClientSession, repositories: List[Dict]) -> List[Dict]:
         """Process each repository to gather additional data."""
         tasks = [self.process_single_repository(session, repo) for repo in repositories]
-        return [_result for _result in await asyncio.gather(*tasks) if _result is not None]
+        results = await asyncio.gather(*tasks)
+        return await asyncio.to_thread(lambda: [_result for _result in results if _result is not None])
 
     async def process_single_repository(self, session: aiohttp.ClientSession, repo: Dict[str, str]) -> Optional[Dict]:
         """Process a single repository to gather additional data."""
