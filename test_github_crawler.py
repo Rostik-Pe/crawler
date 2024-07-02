@@ -260,24 +260,25 @@ class TestMainFunction(unittest.TestCase):
 class TestDataInput(unittest.TestCase):
 
     def setUp(self):
-        self.test_file_name = 'test_input_data.ini'
-        config = configparser.ConfigParser()
-        config['SETTINGS'] = {'keywords': 'Python, Django, jwt', 'type': 'Repositories'}
-        with open(self.test_file_name, 'w') as configfile:
-            config.write(configfile)
+        self.test_file_name = 'test_input_data.json'
+        test_data = {
+            "keywords": ["Python", "Django", "jwt"],
+            "type": "Repositories"
+        }
+        with open(self.test_file_name, 'w') as json_file:
+            json.dump(test_data, json_file)
 
     def test_get_data_from_file(self):
         keywords, _type = get_data_from_file(file_name=self.test_file_name)
-        self.assertEqual(keywords, 'Python, Django, jwt')
+        self.assertEqual(keywords, 'Python Django jwt')
         self.assertEqual(_type, 'Repositories')
 
     def test_get_data_from_file_invalid_file(self):
         with self.assertRaises(ValueError):
-            get_data_from_file('test_invalid_file.ini')
+            get_data_from_file('test_invalid_file.json')
 
     def tearDown(self):
-        # Clean up: delete the 'test_input_data.ini' file after testing
-        os.remove('test_input_data.ini')
+        os.remove(self.test_file_name)
 
     @parameterized.expand([
         ("python asyncio", "Repositories", ['python', 'asyncio'], "Repositories"),
