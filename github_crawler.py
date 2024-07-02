@@ -323,23 +323,23 @@ def generate_input_data_json(inp_data_key: str, inp_data_type: str) -> str:
     return json.dumps(input_data)
 
 
-def get_data_from_file(file_name: str = 'input_data.ini') -> Tuple[str, str]:
+def get_data_from_file(file_name: str = 'input_data.json') -> Tuple[str, str]:
     """
-    Read keywords and type from the specified .ini file using configparser.
+    Read keywords and type from the specified JSON file.
 
     Args:
-        file_name (str): Name of the .ini file to read. Default is 'input_data.ini'.
+        file_name (str): Name of the JSON file to read. Default is 'input_data.json'.
 
     Returns:
         tuple: A tuple containing keywords (str) and type (str) read from the file.
     """
-    config = configparser.ConfigParser()
     try:
-        config.read(file_name)
-        keywords = config['SETTINGS']['keywords']
-        _type = config['SETTINGS']['type']
+        with open(file_name) as file:
+            data = json.load(file)
+        keywords = ' '.join(data['keywords'])
+        _type = data['type']
         return keywords, _type
-    except (configparser.Error, KeyError) as e:
+    except (json.JSONDecodeError, KeyError, IOError) as e:
         raise ValueError(f"Error reading '{file_name}': {e}")
 
 
