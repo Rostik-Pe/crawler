@@ -16,7 +16,7 @@ This script requires Python 3.11 version. All necessary dependencies are listed 
 ## Installation
 
 1. Clone the repository:
-  git clone https://github.com/yourusername/github-crawler.git
+  git clone https://github.com/Rostik-Pe/github-crawler.git
   cd github-crawler
 2. Create a virtual environment and activate it:
   python -m venv venv
